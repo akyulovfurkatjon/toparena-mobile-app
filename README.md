@@ -1,5 +1,5 @@
 # toparena-mobile-app
-toparena uchun kerakli faylarni saqlash uchun
+toparena uchun kerakli faylarni saqlash uchun foydalanamiz
 import React, { useState, useEffect } from 'react';
 
 // API'dan keladigan jamoa ma'lumotlari uchun (qisqacha)
