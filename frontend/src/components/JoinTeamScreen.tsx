@@ -1,240 +1,228 @@
-import React, { useState, ChangeEvent } from 'react';
+import React, { useState, useEffect } from 'react';
 
-// O'zbekiston viloyatlari ro'yxati
-const uzbekViloyatlar = [
-  "Toshkent shahri", "Toshkent viloyati", "Andijon", "Buxoro", "Farg'ona", 
-  "Jizzax", "Xorazm", "Namangan", "Navoiy", "Qashqadaryo", 
-  "Samarqand", "Sirdaryo", "Surxondaryo", "Qoraqalpog'iston"
-];
-
-// API'ga yuboriladigan ma'lumotlar tipi (FastAPI'dagi TeamInput'ga mos)
-interface TeamInputData {
+// API'dan keladigan jamoa ma'lumotlari uchun (qisqacha)
+interface TeamData {
+  team_id: string;
   name: string;
-  viloyat: string;
   logo_url?: string;
 }
 
+// API'dan keladigan xatolik
+interface ErrorData {
+  detail: string;
+}
+
 // Komponentning TypeScript interfeysi
-const CreateTeamScreen: React.FC = () => {
-  const [teamName, setTeamName] = useState('');
-  const [viloyat, setViloyat] = useState<string>(""); // Select uchun standart
-  const [description, setDescription] = useState('');
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+const JoinTeamScreen: React.FC = () => {
+  // `screen_spec_join_team.json` dagi holatlar
+  const [loading, setLoading] = useState(true); // Dastlabki ma'lumotni yuklash
+  const [error, setError] = useState<string | null>(null);
+  const [teamData, setTeamData] = useState<TeamData | null>(null);
   
-  const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<{ [key: string]: string | null }>({});
+  const [isJoining, setIsJoining] = useState(false); // Tasdiqlash tugmasi bosilganda
+  const [joinError, setJoinError] = useState<string | null>(null);
+  
+  // Taklifnoma tokenini URL'dan olish (simulyatsiya)
+  // Haqiqiy ilovada bu 'react-router' dagi 'useParams' orqali olinadi
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
 
-  // Validatsiya (tekshirish) funksiyasi
-  const validateForm = (): boolean => {
-    const newErrors: { [key: string]: string | null } = {};
+  // 1. Ekran ochilganda jamoa ma'lumotlarini yuklash (data_flow.on_load)
+  useEffect(() => {
+    // URL'dan 'token' ni olish (masalan: .../join?token=A1B2C3D4)
+    const params = new URLSearchParams(window.location.search);
+    let token = params.get('token'); // 'const' o'rniga 'let'
     
-    // US-201 AC: Jamoa nomi kamida 3 ta belgi
-    if (teamName.length < 3) {
-      newErrors.teamName = "Jamoa nomi kamida 3 ta belgidan iborat bo'lishi kerak.";
+    // --- PREVIEW UCHUN VAQTINCHALIK O'ZGARTIRISH ---
+    // Haqiqiy ilovada bu 'if' shartini olib tashlang.
+    if (!token) {
+      console.warn("URL'da token topilmadi. Preview uchun soxta token (A1B2C3D4) ishlatilmoqda.");
+      token = "A1B2C3D4"; // Bizning backend'dagi soxta token (join_router.py)
+    }
+    // --- O'ZGARTIRISH TUGADI ---
+
+    if (!token) {
+      setError("Taklifnoma tokeni topilmadi.");
+      setLoading(false);
+      return;
     }
     
-    // US-201 AC: Viloyat tanlanishi shart
-    if (!viloyat) {
-      newErrors.viloyat = "Iltimos, viloyatni tanlang.";
-    }
+    setInviteToken(token);
     
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+    const fetchTeamData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        // `GET /api/v1/join-team?token={{token}}` endpointini chaqirish
+        
+        // API manzilini Vercel'dagi maxfiy kalitdan o'qish
+        const API_URL = process.env.REACT_APP_API_URL || 'https://toparena-mobile-app.vercel.app';
+        const response = await fetch(`${API_URL}/api/v1/join-team?token=${token}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            // Bu endpoint ochiq bo'lishi mumkin yoki o'yinchining tokenini talab qilishi mumkin
+            'Authorization': 'Bearer fake-player-token' 
+          },
+        });
 
-  // Logo tanlash (HTML input type='file' uchun)
-  const handleSelectLogo = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setLogoFile(file);
-      setErrors(prev => ({ ...prev, logo: null }));
-      
-      // Rasm preview uchun
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      setLogoFile(null);
-      setLogoPreview(null);
-    }
-  };
+        if (!response.ok) {
+          const errorData: ErrorData = await response.json();
+          throw new Error(errorData.detail || 'Taklifnoma topilmadi yoki eskirgan.');
+        }
 
-  // Formani yuborish (screen_spec: submit_button)
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); // Formaning an'anaviy yuborilishini to'xtatish
-    if (!validateForm()) {
-      return; // Validatsiyadan o'tmadi
-    }
-    
-    setIsLoading(true);
-    setErrors({});
-
-    let uploadedLogoUrl = undefined;
-
-    // 1. Rasmni yuklash (TODO: Bu yerda S3 ga yuklash mantig'i bo'lishi kerak)
-    if (logoFile) {
-      // Haqiqiy loyihada, avval S3 ga yuklab, URL olinadi.
-      // Hozircha buni simulyatsiya qilamiz.
-      // const formData = new FormData();
-      // formData.append('file', logoFile);
-      // const uploadResponse = await fetch('https://api.futapp.uz/api/v1/upload-logo', { ... });
-      // const uploadData = await uploadResponse.json();
-      // uploadedLogoUrl = uploadData.url;
-      console.log("Rasm yuklanmoqda (simulyatsiya)...", logoFile.name);
-      // Simulyatsiya qilingan URL
-      uploadedLogoUrl = `https://s3.futapp.uz/logos/${logoFile.name}`;
-    }
-    
-    const teamData: TeamInputData = {
-      name: teamName,
-      viloyat: viloyat!,
-      logo_url: uploadedLogoUrl,
+        const data: TeamData = await response.json();
+        setTeamData(data); // Jamoa ma'lumotlarini saqlash
+        
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
     };
+
+    fetchTeamData();
+  }, []); // Bu faqat bir marta, komponent ochilganda ishlaydi
+
+  // 2. Jamoaga qo'shilishni tasdiqlash (confirm_button bosilganda)
+  const handleConfirmJoin = async () => {
+    if (!inviteToken) return;
+    
+    setIsJoining(true);
+    setJoinError(null);
     
     try {
-      // 2. Backend (FastAPI) endpointini chaqirish
-      // Bizning 'backend/routers/team_router.py' dagi POST /api/v1/teams
+      // `POST /api/v1/join-team` endpointini chaqirish
+      // (FastAPI'dagi `join_router.py` ga mos)
       
       // API manzilini Vercel'dagi maxfiy kalitdan o'qish
       const API_URL = process.env.REACT_APP_API_URL || 'https://toparena-mobile-app.vercel.app';
-      const response = await fetch(`${API_URL}/api/v1/teams`, {
+      const response = await fetch(`${API_URL}/api/v1/join-team`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer fake-coach-token' 
+          'Authorization': 'Bearer fake-player-token' // Bu o'yinchi tokeni bo'lishi kerak
         },
-        body: JSON.stringify(teamData),
+        body: JSON.stringify({ invite_token: inviteToken }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Server xatoligi");
+        const errorData: ErrorData = await response.json();
+        // Masalan: "Siz allaqachon boshqa jamoa a'zosisiz."
+        throw new Error(errorData.detail || "Jamoaga qo'shilishda xatolik.");
       }
-
-      const newTeam = await response.json();
+      
+      const result = await response.json();
       
       // Muvaffaqiyat!
-      console.log('Jamoa yaratildi:', newTeam);
-      // Bu yerda foydalanuvchini yangi jamoa sahifasiga yo'naltirish kerak
-      // Masalan: window.location.href = `/teams/${newTeam.team_id}`;
-      alert("Jamoa muvaffaqiyatli yaratildi!");
+      // Foydalanuvchini jamoa sahifasiga yo'naltirish
+      alert(result.message); // "Siz 'Paxtakor' jamoasiga muvaffaqiyatli qo'shildingiz!"
+      // window.location.href = `/teams/${teamData?.team_id}`;
 
-
-    } catch (error: any) {
-      console.error(error);
-      setErrors({ form: error.message || "Jamoa yaratishda noma'lum xatolik." });
+    } catch (err: any) {
+      setJoinError(err.message);
     } finally {
-      setIsLoading(false);
+      setIsJoining(false);
     }
   };
 
-  return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-900 p-4 font-inter">
-      <div className="w-full max-w-2xl bg-gray-800 text-white rounded-lg shadow-xl p-8">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <h1 className="text-3xl font-bold text-center mb-6">Yangi Jamoa Yaratish</h1>
+  // 3. Bekor qilish (cancel_button bosilganda)
+  const handleCancel = () => {
+    // Asosiy sahifaga qaytarish
+    window.location.href = '/';
+  };
 
-          {/* screen_spec: logo_uploader */}
-          <div className="flex flex-col items-center space-y-2">
-            <label 
-              htmlFor="logo-upload" 
-              className="w-32 h-32 rounded-full bg-gray-700 flex items-center justify-center border-2 border-dashed border-blue-500 cursor-pointer hover:bg-gray-600 transition"
-              aria-label="Jamoa logotipini yuklash"
-            >
-              {logoPreview ? (
-                <img src={logoPreview} alt="Jamoa logotipi" className="w-full h-full rounded-full object-cover" />
-              ) : (
-                <span className="text-gray-400 text-center text-sm">Logo Yuklash</span>
-              )}
-            </label>
-            <input 
-              id="logo-upload" 
-              type="file" 
-              accept="image/png, image/jpeg" 
-              className="hidden" 
-              onChange={handleSelectLogo}
-            />
-            {errors.logo && <p className="text-red-400 text-sm">{errors.logo}</p>}
-          </div>
+  // --- Komponentni chizish ---
 
-          {/* screen_spec: team_name_input */}
-          <div>
-            <label htmlFor="teamName" className="block text-sm font-medium text-gray-300 mb-2">
-              Jamoa nomi
-            </label>
-            <input
-              id="teamName"
-              type="text"
-              value={teamName}
-              onChange={(e) => setTeamName(e.target.value)}
-              placeholder="Jamoa nomini kiriting (masalan, 'Paxtakor U-21')"
-              className={`w-full px-4 py-3 bg-gray-700 border rounded-lg text-white focus:outline-none focus:ring-2 ${errors.teamName ? 'border-red-500 focus:ring-red-500' : 'border-gray-600 focus:ring-blue-500'}`}
-              aria-invalid={!!errors.teamName}
-            />
-            {errors.teamName && <p className="text-red-400 text-sm mt-1">{errors.teamName}</p>}
-          </div>
+  const renderContent = () => {
+    // 1. Yuklanmoqda (loading_indicator)
+    if (loading) {
+      return (
+        <div className="flex flex-col items-center justify-center h-48">
+          <svg className="animate-spin h-10 w-10 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p className="mt-4 text-gray-400">Taklifnoma tekshirilmoqda...</p>
+        </div>
+      );
+    }
 
-          {/* screen_spec: viloyat_picker (HTML Select) */}
-          <div>
-            <label htmlFor="viloyat" className="block text-sm font-medium text-gray-300 mb-2">
-              Viloyat
-            </label>
-            <select
-              id="viloyat"
-              value={viloyat}
-              onChange={(e) => setViloyat(e.target.value)}
-              className={`w-full px-4 py-3 bg-gray-700 border rounded-lg text-white focus:outline-none focus:ring-2 ${errors.viloyat ? 'border-red-500 focus:ring-red-500' : 'border-gray-600 focus:ring-blue-500'}`}
-              aria-invalid={!!errors.viloyat}
-            >
-              <option value="" disabled className="text-gray-500">Viloyatni tanlang...</option>
-              {uzbekViloyatlar.map((v) => (
-                <option key={v} value={v} className="text-black">{v}</option>
-              ))}
-            </select>
-            {errors.viloyat && <p className="text-red-400 text-sm mt-1">{errors.viloyat}</p>}
-          </div>
+    // 2. Xatolik (error_message)
+    if (error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-48 text-center">
+          <span className="text-5xl mb-4">🛑</span>
+          <h2 className="text-2xl font-bold text-red-400 mb-2">Xatolik!</h2>
+          <p className="text-gray-300">{error}</p>
+        </div>
+      );
+    }
 
-          {/* screen_spec: description_input */}
-          <div>
-            <label htmlFor="description" className="block text-sm font-medium text-gray-300 mb-2">
-              Jamoa haqida (Ixtiyoriy)
-            </label>
-            <textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Jamoa haqida qisqacha..."
-              rows={4}
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+    // 3. Tasdiqlash oynasi (confirmation_card)
+    if (teamData) {
+      return (
+        <div className="text-center" aria-labelledby="confirmation-title">
+          {/* team_logo */}
+          <img 
+            src={teamData.logo_url || 'https://placehold.co/100x100/3B82F6/FFFFFF?text=Logo'} 
+            alt="Jamoa logotipi" 
+            className="w-24 h-24 rounded-full mx-auto mb-4 border-2 border-blue-500"
+          />
+          
+          {/* title_text */}
+          <h2 id="confirmation-title" className="text-3xl font-bold text-white mb-2">
+            Sizni jamoaga taklif qilishdi!
+          </h2>
+          
+          {/* team_name_text */}
+          <p className="text-lg text-gray-300 mb-8">
+            Siz "<span className="font-bold text-blue-400">{teamData.name}</span>" jamoasiga qo'shilmoqchimisiz?
+          </p>
+          
+          {joinError && <p className="text-red-400 text-sm text-center mb-4">{joinError}</p>}
 
-          {/* screen_spec: submit_button va loading_indicator */}
-          <div>
-            {errors.form && <p className="text-red-400 text-sm text-center mb-4">{errors.form}</p>}
+          <div className="flex flex-col sm:flex-row justify-center gap-4">
+            {/* cancel_button */}
             <button
-              type="submit"
-              disabled={isLoading || !teamName || !viloyat}
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-500 disabled:cursor-not-allowed transition"
-              aria-label="Jamoani yaratish tugmasi"
+              onClick={handleCancel}
+              disabled={isJoining}
+              className="w-full sm:w-auto px-6 py-3 rounded-lg bg-gray-600 text-white font-medium hover:bg-gray-500 transition disabled:opacity-50"
+              aria-label="Bekor qilish"
             >
-              {isLoading ? (
+              Bekor qilish
+            </button>
+
+            {/* confirm_button */}
+            <button
+              onClick={handleConfirmJoin}
+              disabled={isJoining}
+              className="w-full sm:w-auto flex justify-center items-center px-6 py-3 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 transition disabled:bg-blue-400"
+              aria-label={`Ha, ${teamData.name} jamoasiga qo'shilish`}
+            >
+              {isJoining ? (
                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
               ) : (
-                "Jamoani Yaratish"
+                "Ha, qo'shilish"
               )}
             </button>
           </div>
-        </form>
+        </div>
+      );
+    }
+    
+    return null; // Hech qanday holatga tushmasa
+  };
+
+  return (
+    <div className="flex justify-center items-center min-h-screen bg-gray-900 p-4 font-inter">
+      <div className="w-full max-w-lg bg-gray-800 rounded-lg shadow-xl p-8">
+        {renderContent()}
       </div>
     </div>
   );
 };
 
-export default CreateTeamScreen;
+export default JoinTeamScreen;
